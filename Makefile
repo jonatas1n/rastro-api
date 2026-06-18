@@ -10,7 +10,7 @@ HOST        ?= 127.0.0.1
 PORT        ?= 8000
 APP         ?= app.main:app
 
-.PHONY: help setup venv install env run dev docker-up docker-down health clean
+.PHONY: help setup venv install env run dev docker-up docker-down health clean test
 
 help: ## Lista alvos disponíveis
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -42,6 +42,10 @@ docker-down: ## Para containers do compose
 
 health: ## GET /health (PORT=$(PORT))
 	@curl -sf "http://$(HOST):$(PORT)/health" | $(PYTHON) -m json.tool || (echo "API não responde em http://$(HOST):$(PORT)"; exit 1)
+
+test: install ## Roda pytest (API)
+	@$(PIP) install -r requirements-dev.txt
+	@$(PYTHON) -m pytest tests/ -v
 
 clean: ## Remove __pycache__ e *.pyc
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

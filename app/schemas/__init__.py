@@ -58,6 +58,9 @@ class TransactionOut(BaseModel):
 class TransactionUpdate(BaseModel):
     is_essential: Optional[bool]     = None
     category:     Optional[CategoryEnum] = None
+    place:        Optional[str] = None
+    amount:       Optional[float] = None
+    timestamp:    Optional[datetime] = None
 
 
 # ── Category ──────────────────────────────────────────────────────────────────

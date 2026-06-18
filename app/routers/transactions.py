@@ -89,6 +89,12 @@ def update_transaction(
         tx.is_essential = body.is_essential
     if body.category is not None:
         tx.category = body.category
+    if body.place is not None:
+        tx.place = body.place.strip()
+    if body.amount is not None:
+        tx.amount = body.amount
+    if body.timestamp is not None:
+        tx.timestamp = body.timestamp
 
     session.add(tx)
     session.commit()
