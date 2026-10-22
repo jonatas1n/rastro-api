@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from anthropic import Anthropic
 from sqlmodel import Session, select
@@ -25,6 +25,12 @@ _TEMPLATES: dict[str, list[str]] = {
     ],
     "first_transaction_day": [
         "Primeiro gasto do dia registrado ✅ O rastro começou.",
+    ],
+    "spending_week_up": [
+        "Esta semana está {pct}% acima da anterior ({current:.0f} vs {previous:.0f}). Vale ficar de olho.",
+    ],
+    "spending_week_down": [
+        "Semana mais leve: {pct}% a menos que a passada. Boa!",
     ],
 }
 
@@ -136,3 +142,53 @@ async def evaluate_transaction(
             fired.append(msg)
 
     return fired
+
+
+def _sum_amount(user_id: int, start: datetime, end: datetime, session: Session) -> float:
+    txs = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == user_id,
+            Transaction.timestamp >= start,
+            Transaction.timestamp < end,
+        )
+    ).all()
+    return sum(t.amount for t in txs)
+
+
+async def evaluate_spending_variation(
+    user: User,
+    session: Session,
+    *,
+    moderate_pct: int = 25,
+    min_total: float = 10.0,
+) -> ContextMessage | None:
+    """Compara últimos 7 dias com os 7 anteriores (mesma lógica do app)."""
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    current_start = today_start - timedelta(days=7)
+    previous_start = today_start - timedelta(days=14)
+
+    current = _sum_amount(user.id, current_start, today_start, session)
+    previous = _sum_amount(user.id, previous_start, current_start, session)
+
+    if current < min_total or previous < min_total:
+        return None
+
+    pct = round((current - previous) / previous * 100)
+    if pct >= moderate_pct:
+        return await maybe_send(
+            "spending_week_up",
+            user,
+            session,
+            {"pct": pct, "current": current, "previous": previous},
+            use_llm=False,
+        )
+    if pct <= -moderate_pct:
+        return await maybe_send(
+            "spending_week_down",
+            user,
+            session,
+            {"pct": abs(pct), "current": current, "previous": previous},
+            use_llm=False,
+        )
+    return None

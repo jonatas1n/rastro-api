@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from ..database import get_session
@@ -14,9 +14,27 @@ from ..schemas import (
 )
 from ..services.auth import get_current_user
 from ..services.categorization import categorize, learn_from_feedback
-from ..services.messages import evaluate_transaction
+from ..services.messages import evaluate_transaction, evaluate_spending_variation
+from ..services.notification_pipeline import find_recent_duplicate
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+@router.get("", response_model=list[TransactionOut])
+def list_transactions(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    txs = session.exec(
+        select(Transaction)
+        .where(Transaction.user_id == user.id)
+        .order_by(Transaction.timestamp.desc(), Transaction.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return [TransactionOut.model_validate(t) for t in txs]
 
 
 @router.post("/sync", response_model=list[TransactionOut])
@@ -25,7 +43,8 @@ async def sync_batch(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    saved: list[Transaction] = []
+    saved: list[TransactionOut] = []
+    had_new = False
 
     for item in body.transactions:
         existing = session.exec(
@@ -35,8 +54,32 @@ async def sync_batch(
             )
         ).first()
         if existing:
-            saved.append(existing)
+            saved.append(TransactionOut.model_validate(existing))
             continue
+
+        if user.id is not None:
+            duplicate = find_recent_duplicate(
+                session,
+                user.id,
+                item.amount,
+                item.place,
+                item.timestamp,
+            )
+            if duplicate is not None and duplicate.id is not None:
+                saved.append(
+                    TransactionOut(
+                        id=duplicate.id,
+                        local_id=item.local_id,
+                        place=duplicate.place,
+                        amount=duplicate.amount,
+                        category=duplicate.category,
+                        is_essential=duplicate.is_essential,
+                        timestamp=duplicate.timestamp,
+                        raw_notification=duplicate.raw_notification,
+                        suppressed_duplicate=True,
+                    )
+                )
+                continue
 
         tx = Transaction(
             local_id=item.local_id,
@@ -51,7 +94,8 @@ async def sync_batch(
         session.add(tx)
         session.commit()
         session.refresh(tx)
-        saved.append(tx)
+        saved.append(TransactionOut.model_validate(tx))
+        had_new = True
 
         day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         daily_txs = session.exec(
@@ -66,7 +110,10 @@ async def sync_batch(
 
         await evaluate_transaction(tx, user, session, daily_total, non_ess_ratio)
 
-    return [TransactionOut.model_validate(t) for t in saved]
+    if had_new:
+        await evaluate_spending_variation(user, session)
+
+    return saved
 
 
 @router.patch("/{local_id}", response_model=TransactionOut)

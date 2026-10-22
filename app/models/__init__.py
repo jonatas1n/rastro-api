@@ -1,7 +1,9 @@
 from .db import (
+    AppWhitelist,
     CategoryEnum,
     CategoryRule,
     ContextMessage,
+    NotificationCache,
     SyncStatus,
     Transaction,
     User,
@@ -14,4 +16,6 @@ __all__ = [
     "ContextMessage",
     "CategoryEnum",
     "SyncStatus",
+    "NotificationCache",
+    "AppWhitelist",
 ]
